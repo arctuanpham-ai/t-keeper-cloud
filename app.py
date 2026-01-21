@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from vnstock import listing_companies, stock_historical_data, Quote, Listing
+from vnstock import Quote, Listing
 import plotly.graph_objects as go
 import google.generativeai as genai
 from datetime import datetime, timedelta
