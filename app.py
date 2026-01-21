@@ -8,55 +8,92 @@ import time
 
 # ==================== CONFIGURATION ====================
 st.set_page_config(
-    page_title="T+ KEEPER - CLOUD",
-    page_icon="☁️",
+    page_title="T+ KEEPER PRO",
+    page_icon="🦅",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom Colors & CSS for Dark Mode Professional UI
+# ==================== STYLING (PRO DARK MODE) ====================
 st.markdown("""
 <style>
-    /* Metric Cards */
-    [data-testid="stMetricValue"] {
-        font-size: 24px;
-        color: #00e676; /* Green Accent */
-    }
-    [data-testid="stMetricDelta"] svg {
-        fill: #00e676;
+    /* Main Background & Text */
+    .stApp {
+        background-color: #0e1117;
+        color: #fafafa;
     }
     
-    /* Headers */
-    h1, h2, h3 {
-        color: #f0f2f6; 
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    /* Sidebar */
+    [data-testid="stSidebar"] {
+        background-color: #161b22;
+        border-right: 1px solid #30363d;
     }
-
-    /* Buttons */
-    .stButton>button {
-        width: 100%;
-        background-color: #2962ff;
-        color: white;
-        border-radius: 8px;
-        font-weight: bold;
-        transition: 0.3s;
+    
+    /* Cards */
+    .metric-card {
+        background-color: #21262d;
+        border: 1px solid #30363d;
+        border-radius: 10px;
+        padding: 20px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        text-align: center;
+        transition: transform 0.2s;
     }
-    .stButton>button:hover {
-        background-color: #0039cb;
+    .metric-card:hover {
+        transform: translateY(-5px);
         border-color: #00e676;
     }
+    .metric-value {
+        font-size: 28px;
+        font-weight: bold;
+        color: #00e676;
+        margin: 10px 0;
+    }
+    .metric-label {
+        font-size: 14px;
+        color: #8b949e;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
     
-    /* Highlights */
-    .highlight-row { 
-        background-color: rgba(41, 98, 255, 0.1); 
+    /* Buttons */
+    .stButton>button {
+        background-color: #238636;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        font-weight: 600;
+        padding: 0.5rem 1rem;
+        transition: all 0.2s;
+    }
+    .stButton>button:hover {
+        background-color: #2ea043;
+        box-shadow: 0 0 10px rgba(46, 160, 67, 0.4);
+    }
+    
+    /* Custom Headers */
+    h1, h2, h3 {
+        font-family: 'Inter', sans-serif;
+        font-weight: 700;
+        letter-spacing: -0.5px;
+    }
+    
+    /* Highlight Table Rows */
+    [data-testid="stDataFrame"] {
+        border: 1px solid #30363d;
+        border-radius: 8px;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# ==================== HELPER FUNCS ====================
+# ==================== STATE MANAGEMENT ====================
+if 'portfolio' not in st.session_state:
+    st.session_state.portfolio = [] # List of {symbol, price, vol, date}
+if 'scan_results' not in st.session_state:
+    st.session_state.scan_results = pd.DataFrame()
 
+# ==================== HELPER FUNCTIONS ====================
 def calculate_rsi(series, period=14):
-    """Tính RSI chuẩn"""
     delta = series.diff()
     gain = delta.where(delta > 0, 0)
     loss = -delta.where(delta < 0, 0)
@@ -65,11 +102,9 @@ def calculate_rsi(series, period=14):
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
 
-@st.cache_data(ttl=900) # 15 min cache
-def get_market_metrics():
-    """Lấy chỉ số VNINDEX cơ bản để hiển thị Dashboard (Mock hoặc Real nếu API cho phép)"""
+@st.cache_data(ttl=900)
+def get_market_overview():
     try:
-        # VNStock Quote API có thể lấy snapshot, ở đây lấy lịch sử ngày gần nhất của VNINDEX
         quote = Quote(symbol='VNINDEX', source='vci')
         df = quote.history(start=(datetime.now() - timedelta(days=5)).strftime('%Y-%m-%d'), 
                            end=datetime.now().strftime('%Y-%m-%d'), interval='D')
@@ -77,191 +112,237 @@ def get_market_metrics():
             latest = df.iloc[-1]
             prev = df.iloc[-2]
             change = latest['close'] - prev['close']
-            pct_change = (change / prev['close']) * 100
-            
-            # Ước lượng thanh khoản (tỷ VND)
-            vol_val = (latest['volume'] * latest['close']) / 1e9 
-            return latest['close'], change, pct_change, vol_val
+            pct = (change / prev['close']) * 100
+            vol = (latest['volume'] * latest['close']) / 1e9
+            return latest['close'], change, pct, vol
     except:
         pass
-    return 1250.0, 5.0, 0.4, 15000.0 # Fallback mock
+    return 1250.0, 5.0, 0.4, 15000.0
 
 @st.cache_data(ttl=3600)
-def get_scan_list():
-    """Lấy danh sách VN30 + Top Midcap (50 mã)"""
-    # Vì vnstock listing khá nặng, ta hardcode VN30 để tối ưu Cloud
-    vn30 = [
+def get_top_symbols():
+    # VN30 + Top Liquid Stocks
+    return [
         "ACB", "BCM", "BID", "BVH", "CTG", "FPT", "GAS", "GVR", "HDB", "HPG",
         "MBB", "MSN", "MWG", "PLX", "POW", "SAB", "SHB", "SSB", "SSI", "STB",
-        "TCB", "TPB", "VCB", "VHM", "VIB", "VIC", "VJC", "VNM", "VPB", "VRE"
-    ]
-    # Thêm 20 mã hot khác
-    midcap = [
+        "TCB", "TPB", "VCB", "VHM", "VIB", "VIC", "VJC", "VNM", "VPB", "VRE",
         "DGC", "DXG", "DIG", "PDR", "NVL", "KBC", "VGC", "VIX", "GEX", "HAG",
         "DBC", "HSG", "NKG", "VND", "HCM", "FRT", "FTS", "BSI", "ORS", "TCH"
     ]
-    return vn30 + midcap
 
-def scan_stock(symbol):
-    """Xử lý từng mã: lấy data -> tính chỉ báo"""
+def scan_symbol(symbol):
     try:
-        end_str = datetime.now().strftime('%Y-%m-%d')
-        start_str = (datetime.now() - timedelta(days=50)).strftime('%Y-%m-%d')
-        
+        end = datetime.now().strftime('%Y-%m-%d')
+        start = (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d')
         quote = Quote(symbol=symbol, source='vci', show_log=False)
-        df = quote.history(start=start_str, end=end_str, interval='D')
+        df = quote.history(start=start, end=end, interval='D')
         
-        if df is None or len(df) < 20:
-            return None
-            
-        # Indicator Calc
+        if df is None or len(df) < 20: return None
+        
         close = df['close']
         rsi = calculate_rsi(close).iloc[-1]
-        ma20 = close.rolling(20).mean().iloc[-1]
         vol = df['volume'].iloc[-1]
         avg_vol = df['volume'].rolling(20).mean().iloc[-1]
+        ma20 = close.rolling(20).mean().iloc[-1]
         
-        # T+ Score Logic (Simple)
-        score = 0
-        if rsi < 40: score += 1
-        if close.iloc[-1] > ma20: score += 1
-        if vol > avg_vol * 1.2: score += 1
+        sig = "Neutral"
+        if rsi < 35: sig = "Oversold (Buy?)"
+        elif rsi > 70: sig = "Overbought (Sell?)"
+        elif vol > avg_vol * 1.5 and close.iloc[-1] > close.iloc[-2]: sig = "Vol Breakout"
         
         return {
-            "Mã": symbol,
-            "Giá": close.iloc[-1],
-            "RSI": round(rsi, 2),
-            "MA20": round(ma20, 2),
-            "Vol đột biến": f"{round(vol/avg_vol, 1)}x" if avg_vol > 0 else "N/A",
-            "T+ Score": score
+            "Symbol": symbol,
+            "Price": close.iloc[-1],
+            "Change %": ((close.iloc[-1] - close.iloc[-2])/close.iloc[-2])*100,
+            "RSI": rsi,
+            "Vol Ratio": vol/avg_vol if avg_vol > 0 else 0,
+            "Signal": sig
         }
-    except:
-        return None
+    except: return None
 
-# ==================== MAIN UI ====================
+# ==================== UI LAYOUT ====================
 
-st.title("🛡️ T+ KEEPER | Cloud Edition")
-
-# --- Sidebar ---
-st.sidebar.header("⚙️ Cấu hình Scan")
-gemini_key = st.sidebar.text_input("Gemini API Key", type="password", help="Nhập API Key để dùng AI Analyst")
-rsi_filter = st.sidebar.slider("Ngưỡng RSI Max", 30, 80, 70)
-st.sidebar.info("Phiên bản Cloud giới hạn quét 50 mã (VN30 + Midcap) để đảm bảo tốc độ.")
-
-# --- Dashboard Metrics ---
-col1, col2, col3 = st.columns(3)
-idx_price, idx_change, idx_pct, idx_vol = get_market_metrics()
-
-col1.metric("VNINDEX", f"{idx_price:,.2f}", f"{idx_change:+.2f} ({idx_pct:+.2f}%)")
-col2.metric("Thanh khoản", f"{idx_vol:,.0f} tỷ", "Trung bình")
-col3.metric("Trạng thái", "Tích lũy", "Neutral")
-
-st.divider()
-
-# --- Scanner Section ---
-if st.button("🚀 SCAN MARKET (Top 50 Cap)"):
-    with st.spinner("Đang quét thị trường... Vui lòng đợi..."):
-        symbols = get_scan_list()
-        results = []
-        progress_bar = st.progress(0)
-        
-        for i, sym in enumerate(symbols):
-            res = scan_stock(sym)
-            if res:
-                # Filter logic
-                if res['RSI'] <= rsi_filter:
-                    results.append(res)
-            progress_bar.progress((i + 1) / len(symbols))
-            time.sleep(0.05) # Tránh rate limit
-            
-        progress_bar.empty()
-        
-        if results:
-            df_res = pd.DataFrame(results).sort_values(by="T+ Score", ascending=False)
-            
-            # Styling DataFrame
-            st.success(f"Tìm thấy {len(df_res)} cơ hội tiềm năng!")
-            st.dataframe(
-                df_res,
-                column_config={
-                    "T+ Score": st.column_config.ProgressColumn(
-                        "Điểm T+",
-                        help="Điểm số cơ hội ngắn hạn (0-3)",
-                        format="%d",
-                        min_value=0,
-                        max_value=3,
-                    ),
-                    "Giá": st.column_config.NumberColumn(format="%.2f"),
-                },
-                use_container_width=True,
-                hide_index=True
-            )
-            
-            st.session_state['scan_results'] = df_res
-        else:
-            st.warning("Không tìm thấy mã nào thỏa mãn bộ lọc hiện tại.")
-
-# --- Analysis Section ---
-if 'scan_results' in st.session_state and not st.session_state['scan_results'].empty:
-    st.divider()
-    st.subheader("🤖 AI Analyst")
+# Sidebar Navigation
+with st.sidebar:
+    st.image("https://cdn-icons-png.flaticon.com/512/2764/2764955.png", width=60)
+    st.title("T+ KEEPER")
+    st.caption("EcoHome Invest AI")
+    st.markdown("---")
     
-    selected_stock = st.selectbox("Chọn mã để phân tích chi tiết:", st.session_state['scan_results']['Mã'])
+    menu = st.radio("MAIN MENU", ["📊 Dashboard", "🔍 Scanner", "💼 Portfolio", "🤖 AI Analyst"])
     
-    if st.button("Phân tích & Vẽ biểu đồ"):
-        # Draw Chart
-        quote = Quote(symbol=selected_stock, source='vci', show_log=False)
-        df_hist = quote.history(start=(datetime.now() - timedelta(days=100)).strftime('%Y-%m-%d'), 
-                                end=datetime.now().strftime('%Y-%m-%d'), interval='D')
-        
-        if df_hist is not None:
-            # Candlestick Chart with Plotly
-            fig = go.Figure(data=[go.Candlestick(x=df_hist.index,
-                open=df_hist['open'],
-                high=df_hist['high'],
-                low=df_hist['low'],
-                close=df_hist['close'])])
+    st.markdown("---")
+    gemini_key = st.text_input("🔑 Gemini API Key", type="password")
+    st.caption("Required for AI analysis")
+
+# --- TAB 1: DASHBOARD ---
+if menu == "📊 Dashboard":
+    st.title("Market Overview")
+    
+    idx, chg, pct, vol = get_market_overview()
+    
+    # Custom CSS Cards
+    c1, c2, c3, c4 = st.columns(4)
+    c1.markdown(f"""<div class="metric-card"><div class="metric-label">VNINDEX</div><div class="metric-value">{idx:,.2f}</div><div style="color:{'#00e676' if chg>=0 else '#ff5252'}">{chg:+.2f} ({pct:+.2f}%)</div></div>""", unsafe_allow_html=True)
+    c2.markdown(f"""<div class="metric-card"><div class="metric-label">THANH KHOẢN</div><div class="metric-value">{vol/1000:.1f}k ỷ</div><div style="color:#8b949e">VN30 + HOSE</div></div>""", unsafe_allow_html=True)
+    c3.markdown(f"""<div class="metric-card"><div class="metric-label">XU HƯỚNG</div><div class="metric-value" style="color:#2f81f7">UPTREND</div><div style="color:#8b949e">MA50 Support</div></div>""", unsafe_allow_html=True)
+    c4.markdown(f"""<div class="metric-card"><div class="metric-label">NGÀNH HOT</div><div class="metric-value" style="color:#d2a8ff">BANK</div><div style="color:#8b949e">Dòng tiền mạnh</div></div>""", unsafe_allow_html=True)
+
+    st.markdown("### 🔥 Top Movers (VN30)")
+    # Quick Mock Data for visual flair (Real scanning is in Scanner tab)
+    top_cols = st.columns(3)
+    # Placeholder visual - In real app, this would come from a quick sort of get_top_symbols
+    st.info("💡 Chuyển sang tab **Scanner** để lọc tìm cơ hội mới nhất.")
+
+# --- TAB 2: SCANNER ---
+elif menu == "🔍 Scanner":
+    st.title("T+ Opportunity Scanner")
+    
+    c1, c2, c3 = st.columns([1, 1, 2])
+    with c1:
+        rsi_max = st.slider("RSI Max Limit", 30, 80, 70)
+    with c2:
+        vol_min_ratio = st.slider("Min Vol Ratio (vs MA20)", 0.5, 3.0, 1.0)
+    with c3:
+        st.write("") # Spacer
+        if st.button("🚀 SCAN NOW (50 Major Stocks)", use_container_width=True):
+            symbols = get_top_symbols()
+            results = []
+            prog = st.progress(0)
+            status = st.empty()
             
-            fig.update_layout(title=f"Biểu đồ {selected_stock}", height=400, template="plotly_dark")
-            st.plotly_chart(fig, use_container_width=True)
+            for i, sym in enumerate(symbols):
+                status.text(f"Scanning {sym}...")
+                data = scan_symbol(sym)
+                if data:
+                    if data['RSI'] <= rsi_max and data['Vol Ratio'] >= vol_min_ratio:
+                        results.append(data)
+                prog.progress((i+1)/len(symbols))
+                time.sleep(0.05)
             
-            # Gemini Analyst
-            if gemini_key:
-                try:
-                    genai.configure(api_key=gemini_key)
-                    model = genai.GenerativeModel('gemini-1.5-flash')
-                    
-                    latest_data = df_hist.iloc[-1]
-                    rsi_now = calculate_rsi(df_hist['close']).iloc[-1]
-                    
-                    prompt = f"""
-                    Bạn là một chuyên gia giao dịch T+ tại thị trường chứng khoán Việt Nam.
-                    Hãy phân tích ngắn gọn về mã {selected_stock} dựa trên dữ liệu sau:
-                    - Giá hiện tại: {latest_data['close']}
-                    - RSI: {rsi_now:.2f}
-                    - Volume: {latest_data['volume']}
-                    
-                    Đưa ra nhận định:
-                    1. Xu hướng ngắn hạn (Tăng/Giảm/Đi ngang)
-                    2. Vùng mua/bán khuyến nghị
-                    3. Rủi ro cần chú ý
-                    
-                    Trả lời ngắn gọn dưới 150 từ, dùng emoji, style chuyên nghiệp.
-                    """
-                    
-                    with st.spinner("Gemini đang suy nghĩ..."):
-                        response = model.generate_content(prompt)
-                        st.markdown(f"""
-                        <div style="background-color: #1e1e1e; padding: 15px; border-radius: 10px; border-left: 5px solid #00e676;">
-                            <b>🦅 Gemini Insight:</b><br><br>
-                            {response.text}
-                        </div>
-                        """, unsafe_allow_html=True)
-                except Exception as e:
-                    st.error(f"Lỗi AI: {str(e)}")
+            status.empty()
+            prog.empty()
+            if results:
+                st.session_state.scan_results = pd.DataFrame(results).sort_values(by="RSI")
             else:
-                st.info("Nhập API Key bên trái để xem nhận định từ Gemini AI.")
+                st.warning("No stocks match your filters.")
 
-# Footer
-st.markdown("---")
-st.caption("Powered by Vnstock & Streamlit Cloud | Dev: T+ Keeper")
+    if not st.session_state.scan_results.empty:
+        st.markdown(f"#### 🎯 Found {len(st.session_state.scan_results)} Matches")
+        
+        # Interactive Table
+        st.dataframe(
+            st.session_state.scan_results,
+            column_config={
+                "Price": st.column_config.NumberColumn(format="%.2f"),
+                "Change %": st.column_config.NumberColumn(format="%.2f%%"),
+                "RSI": st.column_config.ProgressColumn(format="%d", min_value=0, max_value=100),
+                "Vol Ratio": st.column_config.NumberColumn(format="%.1fx"),
+            },
+            use_container_width=True,
+            hide_index=True
+        )
+        
+        # Quick Add to Portfolio
+        selected_add = st.selectbox("Add to Portfolio:", st.session_state.scan_results['Symbol'].tolist(), index=None, placeholder="Select stock...")
+        if selected_add:
+            if st.button(f"➕ Add {selected_add} to Portfolio"):
+                # Check if exists
+                if not any(d['symbol'] == selected_add for d in st.session_state.portfolio):
+                    row = st.session_state.scan_results[st.session_state.scan_results['Symbol'] == selected_add].iloc[0]
+                    st.session_state.portfolio.append({
+                        "symbol": selected_add,
+                        "buy_price": row['Price'],
+                        "date": datetime.now().strftime("%Y-%m-%d")
+                    })
+                    st.toast(f"Added {selected_add}!", icon="✅")
+                else:
+                    st.toast("Already in portfolio.", icon="⚠️")
+
+# --- TAB 3: PORTFOLIO ---
+elif menu == "💼 Portfolio":
+    st.title("My Portfolio Tracker")
+    
+    if not st.session_state.portfolio:
+        st.info("Your portfolio is empty. Go to Scanner to add stocks.")
+    else:
+        # Display as Cards
+        for item in st.session_state.portfolio:
+            with st.container():
+                st.markdown(f"""
+                <div style="background-color: #161b22; padding: 15px; border-radius: 8px; border-left: 5px solid #238636; margin-bottom: 10px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <h3 style="margin: 0; color: #fff;">{item['symbol']}</h3>
+                            <span style="color: #8b949e; font-size: 12px;">Buy: {item['date']} @ {item['buy_price']:,.2f}</span>
+                        </div>
+                        <div style="text-align: right;">
+                             <!-- Real-time price check would go here, using static buy price for now -->
+                             <span style="font-weight: bold; font-size: 18px; color: #fff;">Holding</span>
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        if st.button("🗑️ Clear Portfolio"):
+            st.session_state.portfolio = []
+            st.rerun()
+
+# --- TAB 4: AI ANALYST ---
+elif menu == "🤖 AI Analyst":
+    st.title("Gemini Strategic Advisor")
+    
+    # Combined list: Portfolio + Scan Results
+    candidates = [p['symbol'] for p in st.session_state.portfolio]
+    if not st.session_state.scan_results.empty:
+        candidates += st.session_state.scan_results['Symbol'].tolist()
+    candidates = list(set(candidates)) # Unique
+    
+    if not candidates:
+        st.warning("No stocks to analyze (Portfolio empty & No scan results).")
+    else:
+        target = st.selectbox("Select Stock to Analyze:", candidates)
+        
+        if target:
+            # Show Chart First
+            quote = Quote(symbol=target, source='vci', show_log=False)
+            df = quote.history(start=(datetime.now()-timedelta(days=100)).strftime('%Y-%m-%d'), end=datetime.now().strftime('%Y-%m-%d'), interval='D')
+            
+            if df is not None:
+                fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['open'], high=df['high'], low=df['low'], close=df['close'])])
+                fig.update_layout(height=350, margin=dict(l=0,r=0,t=20,b=0), template="plotly_dark")
+                st.plotly_chart(fig, use_container_width=True)
+                
+                if st.button(f"✨ Ask Gemini about {target}"):
+                    if not gemini_key:
+                        st.error("Please enter Gemini API Key in the Sidebar first!")
+                    else:
+                        try:
+                            genai.configure(api_key=gemini_key)
+                            model = genai.GenerativeModel('gemini-1.5-flash')
+                            
+                            latest = df.iloc[-1]
+                            rsi = calculate_rsi(df['close']).iloc[-1]
+                            
+                            prompt = f"""
+                            Act as a senior stock trading expert. Analyze ticker {target} (Vietnam Stock Market).
+                            Data: Price {latest['close']}, RSI {rsi:.1f}, Vol {latest['volume']}.
+                            
+                            Provide a strategic formatted response:
+                            **1. Trend Analysis:** (Bullish/Bearish/Sideways)
+                            **2. Critical Zones:** (Support/Resistance)
+                            **3. Actionable Advice:** (Buy/Sell/Hold with target price)
+                            
+                            Keep it concise, professional, and use emojis.
+                            """
+                            
+                            with st.spinner("Analyzing market structure..."):
+                                resp = model.generate_content(prompt)
+                                st.success("Analysis Complete")
+                                st.markdown(f"""
+                                <div style="background-color: #21262d; padding: 20px; border-radius: 8px;">
+                                {resp.text}
+                                </div>
+                                """, unsafe_allow_html=True)
+                        except Exception as e:
+                            st.error(f"AI Error: {e}")
