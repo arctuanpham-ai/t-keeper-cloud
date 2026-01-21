@@ -156,6 +156,7 @@ def scan_symbol(symbol):
             "Change %": ((close.iloc[-1] - close.iloc[-2])/close.iloc[-2])*100,
             "RSI": rsi,
             "Vol Ratio": vol/avg_vol if avg_vol > 0 else 0,
+            "Volume": vol,
             "Signal": sig
         }
     except: return None
@@ -198,27 +199,37 @@ if menu == "📊 Dashboard":
 elif menu == "🔍 Scanner":
     st.title("T+ Opportunity Scanner")
     
-    c1, c2, c3 = st.columns([1, 1, 2])
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
-        rsi_max = st.slider("RSI Max Limit", 30, 80, 70)
+        rsi_max = st.slider("Max RSI", 30, 80, 70)
     with c2:
-        vol_min_ratio = st.slider("Min Vol Ratio (vs MA20)", 0.5, 3.0, 1.0)
+        vol_min_ratio = st.slider("Min Vol Ratio", 0.5, 5.0, 1.0)
     with c3:
-        st.write("") # Spacer
-        if st.button("🚀 SCAN NOW (50 Major Stocks)", use_container_width=True):
-            symbols = get_top_symbols()
-            results = []
-            prog = st.progress(0)
-            status = st.empty()
-            
-            for i, sym in enumerate(symbols):
-                status.text(f"Scanning {sym}...")
-                data = scan_symbol(sym)
-                if data:
-                    if data['RSI'] <= rsi_max and data['Vol Ratio'] >= vol_min_ratio:
-                        results.append(data)
-                prog.progress((i+1)/len(symbols))
-                time.sleep(0.05)
+        price_max = st.number_input("Max Price (k VND)", min_value=5, value=150, step=5, help="Nhập 50 = 50.000 VND")
+    with c4:
+        vol_min = st.number_input("Min Volume", min_value=1000, value=50000, step=10000)
+
+    if st.button("🚀 SCAN NOW (50 Major Stocks)", use_container_width=True):
+        symbols = get_top_symbols()
+        results = []
+        prog = st.progress(0)
+        status = st.empty()
+        
+        for i, sym in enumerate(symbols):
+            status.text(f"Scanning {sym}...")
+            data = scan_symbol(sym)
+            if data:
+                # Filter Logic
+                # Price in data is typically absolute (e.g., 25000). Input is 25.
+                price_valid = data['Price'] <= (price_max * 1000)
+                vol_valid = data['Volume'] >= vol_min
+                rsi_valid = data['RSI'] <= rsi_max
+                vol_ratio_valid = data['Vol Ratio'] >= vol_min_ratio
+                
+                if price_valid and vol_valid and rsi_valid and vol_ratio_valid:
+                    results.append(data)
+            prog.progress((i+1)/len(symbols))
+            time.sleep(0.05)
             
             status.empty()
             prog.empty()
