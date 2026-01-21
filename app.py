@@ -159,7 +159,16 @@ def scan_symbol(symbol):
             "Volume": vol,
             "Signal": sig
         }
-    except: return None
+
+@st.cache_data(ttl=86400)
+def get_all_symbols():
+    try:
+        # Lấy toàn bộ mã HOSE để làm gợi ý Search
+        lst = Listing()
+        df = lst.symbols_by_exchange(exchange='HOSE')
+        return df['ticker'].tolist()
+    except:
+        return get_top_symbols() # Fallback
 
 # ==================== UI LAYOUT ====================
 
@@ -194,6 +203,41 @@ if menu == "📊 Dashboard":
     top_cols = st.columns(3)
     # Placeholder visual - In real app, this would come from a quick sort of get_top_symbols
     st.info("💡 Chuyển sang tab **Scanner** để lọc tìm cơ hội mới nhất.")
+
+    st.markdown("---")
+    st.markdown("### 🔎 Tra cứu nhanh")
+    
+    all_symbols = get_all_symbols()
+    search_symbol = st.selectbox("Nhập mã cổ phiếu:", [""] + all_symbols, index=0, placeholder="Ví dụ: VCB, HPG...")
+    
+    if search_symbol:
+        st.markdown(f"#### Kết quả: {search_symbol}")
+        col_info, col_chart = st.columns([1, 2])
+        
+        with col_info:
+            data = scan_symbol(search_symbol)
+            if data:
+                st.metric("Giá", f"{data['Price']:,.0f}", f"{data['Change %']:+.2f}%")
+                st.metric("RSI (14)", f"{data['RSI']:.1f}", data['Signal'])
+                st.metric("Vol Ratio", f"{data['Vol Ratio']:.1f}x", f"{data['Volume']:,.0f} cp")
+                
+                if st.button("🤖 AI Phân tích ngay"):
+                    st.session_state['ai_target'] = search_symbol
+                    st.toast(f"Đã chuyển {search_symbol} sang tab AI Analyst!", icon="✅")
+                    # Note: Auto switching tabs involves rerun quirk, simple toast guide is safer
+                    st.info("👉 Vui lòng chọn Tab **AI Analyst** bên trái để xem chi tiết.")
+            else:
+                st.error("Không lấy được dữ liệu mã này.")
+                
+        with col_chart:
+            quote = Quote(symbol=search_symbol, source='vci', show_log=False)
+            df = quote.history(start=(datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d'), 
+                               end=datetime.now().strftime('%Y-%m-%d'), interval='D')
+            if df is not None:
+                fig = go.Figure(data=[go.Candlestick(x=df.index,
+                    open=df['open'], high=df['high'], low=df['low'], close=df['close'])])
+                fig.update_layout(height=300, margin=dict(l=0,r=0,t=0,b=0), template="plotly_dark")
+                st.plotly_chart(fig, use_container_width=True)
 
 # --- TAB 2: SCANNER ---
 elif menu == "🔍 Scanner":
@@ -303,16 +347,24 @@ elif menu == "💼 Portfolio":
 elif menu == "🤖 AI Analyst":
     st.title("Gemini Strategic Advisor")
     
-    # Combined list: Portfolio + Scan Results
+    # Combined list: Portfolio + Scan Results + Search Target
     candidates = [p['symbol'] for p in st.session_state.portfolio]
     if not st.session_state.scan_results.empty:
         candidates += st.session_state.scan_results['Symbol'].tolist()
+    if 'ai_target' in st.session_state:
+        candidates.append(st.session_state.ai_target)
+        
     candidates = list(set(candidates)) # Unique
+    
+    # Auto-select from Dashboard Search
+    default_idx = 0
+    if 'ai_target' in st.session_state and st.session_state.ai_target in candidates:
+        default_idx = candidates.index(st.session_state.ai_target)
     
     if not candidates:
         st.warning("No stocks to analyze (Portfolio empty & No scan results).")
     else:
-        target = st.selectbox("Select Stock to Analyze:", candidates)
+        target = st.selectbox("Select Stock to Analyze:", candidates, index=default_idx)
         
         if target:
             # Show Chart First
