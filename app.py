@@ -159,6 +159,7 @@ def scan_symbol(symbol):
             "Volume": vol,
             "Signal": sig
         }
+    except: return None
 
 @st.cache_data(ttl=86400)
 def get_all_symbols():
